@@ -35,6 +35,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);margin:0;overf
 .h-item{all:unset;cursor:pointer;display:flex;flex-direction:column;align-items:flex-end;padding:6px 4px;border-radius:8px;font-family:var(--f-num);font-variant-numeric:tabular-nums}
 .h-item:hover,.h-item:focus-visible{background:var(--key)}
 .h-item .e{font-size:13px;color:var(--muted);word-break:break-all;text-align:right}
+.h-item .row{display:flex;width:100%;justify-content:space-between;align-items:baseline;gap:12px}
+.h-item .tm{font-family:var(--f-ui);font-size:11px;color:var(--muted);white-space:nowrap}
 .h-item .r{font-size:17px}
 .result{font-family:var(--f-num);font-weight:300;text-align:right;white-space:nowrap;overflow:hidden;font-size:52px;line-height:1.1;min-height:1.1em;font-variant-numeric:tabular-nums}
 .expr{font-family:var(--f-num);font-size:18px;color:var(--muted);text-align:right;word-break:break-all;min-height:1.4em;line-height:1.4}
@@ -98,6 +100,12 @@ const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 history=store.get("swcalc.history",[]);
+/* 履歴は1ヶ月保存。日時のない古い履歴は今日の日付を付けて1ヶ月後に消える */
+function prune(){const lim=new Date();lim.setMonth(lim.getMonth()-1);const t0=lim.getTime(),now=Date.now();
+  history.forEach(h=>{if(!h.t)h.t=now;});history=history.filter(h=>h.t>=t0);if(history.length>5000)history=history.slice(-5000);store.set("swcalc.history",history);}
+prune();
+const WD="日月火水木金土";
+function stamp(t){const d=new Date(t),p=n=>String(n).padStart(2,"0");return `${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]}) ${p(d.getHours())}:${p(d.getMinutes())}`;}
 let showHist=true;
 
 /* ---------- parser: + − × ÷ ( ) %  ----------
@@ -172,8 +180,9 @@ function render(){
   const h=$("history");h.hidden=!showHist;h.innerHTML="";
   if(!history.length){const e=document.createElement("p");e.className="empty";e.textContent="CEを押すと計算が履歴に残ります";h.append(e);}
   history.forEach((it,i)=>{const b=document.createElement("button");b.className="h-item";b.id="h-"+i;
-    b.innerHTML='<span class="e"></span><span class="r"></span>';
+    b.innerHTML='<span class="e"></span><span class="row"><span class="tm"></span><span class="r"></span></span>';
     b.querySelector(".e").textContent=fmtExpr(it.e);b.querySelector(".r").textContent="= "+it.r;
+    b.querySelector(".tm").textContent=it.t?stamp(it.t):"";
     b.addEventListener("click",()=>{expr=it.e;redo=[];render();toast("式を呼び出しました")});h.append(b);});
   h.scrollTop=h.scrollHeight;}
 
@@ -208,8 +217,8 @@ function done(){redo=[];render();}
 function commit(){
   const v=liveValue(expr);
   if(expr&&v!==null&&v!=="err"&&/[+−×÷%]/.test(expr.replace(/^−/,""))){
-    history.push({e:expr.replace(/[+−×÷(]+$/,""),r:fmtNum(v),v:Number(v.toPrecision(14))});
-    if(history.length>200)history.shift();store.set("swcalc.history",history);}
+    history.push({e:expr.replace(/[+−×÷(]+$/,""),r:fmtNum(v),v:Number(v.toPrecision(14)),t:Date.now()});
+    prune();}
   expr="";redo=[];render();}
 $("keys").addEventListener("click",e=>{const b=e.target.closest(".k");if(b)press(b.dataset.k);});
 
@@ -256,7 +265,13 @@ render();
 </script>
 
 <script>
-if("serviceWorker" in navigator){addEventListener("load",()=>navigator.serviceWorker.register("sw.js"));}
+if("serviceWorker" in navigator){
+  // 更新があれば自動で新しい版に切り替える（開いた直後に1回だけ読み直す）
+  const had=!!navigator.serviceWorker.controller;let done=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{if(had&&!done){done=true;location.reload();}});
+  addEventListener("load",()=>navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{}));
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")navigator.serviceWorker.getRegistration().then(r=>r&&r.update()).catch(()=>{});});
+}
 </script>
 </body>
 </html>
