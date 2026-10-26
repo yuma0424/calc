@@ -39,7 +39,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);margin:0;overf
 .h-item .tm{font-family:var(--f-ui);font-size:11px;color:var(--muted);white-space:nowrap}
 .h-item .r{font-size:17px}
 .result{font-family:var(--f-num);font-weight:300;text-align:right;white-space:nowrap;overflow:hidden;font-size:52px;line-height:1.1;min-height:1.1em;font-variant-numeric:tabular-nums}
-.expr{font-family:var(--f-num);font-size:18px;color:var(--muted);text-align:right;word-break:break-all;min-height:1.4em;line-height:1.4}
+.expr{font-family:var(--f-num);font-size:18px;color:var(--muted);text-align:right;overflow-wrap:anywhere;min-height:1.4em;line-height:1.4;padding-block:6px;margin-block:-6px;cursor:text;touch-action:none}
+.expr span{white-space:pre-wrap}
 .expr .caret{display:inline-block;width:2px;height:1.1em;background:var(--op);vertical-align:-3px;margin-left:1px;animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.expr .caret{animation:none}}
@@ -95,7 +96,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);margin:0;overf
 <script>
 (function(){
 const OPS="+−×÷";
-let expr="", redo=[], history=[];
+let expr="", cur=0, redo=[], history=[];  /* cur = カーソル位置（exprの何文字目の前か） */
 const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
@@ -166,6 +167,27 @@ function fmtExpr(s){
    .replace(/([+−×÷])/g," $1 ").replace(/\s+/g," ").trim();}
 
 /* ---------- render ---------- */
+/* 式を1文字ずつspanにして（data-i＝exprの位置）、カーソルを cur の位置に置く */
+function renderExpr(){
+  const el=$("expr"),s=expr;el.innerHTML="";
+  const caret=()=>{const c=document.createElement("span");c.className="caret";el.append(c);};
+  const add=(t,i)=>{const sp=document.createElement("span");sp.textContent=t;if(i!=null)sp.dataset.i=i;el.append(sp);};
+  let i=0;
+  while(i<s.length){
+    if(/[0-9.]/.test(s[i])){let j=i;while(j<s.length&&/[0-9.]/.test(s[j]))j++;
+      const m=s.slice(i,j),d=m.indexOf("."),il=d<0?m.length:d;
+      for(let k=i;k<j;k++){if(k===cur)caret();add(s[k],k);const q=k-i;if(q<il-1&&(il-1-q)%3===0)add(",",null);}
+      i=j;continue;}
+    if(i===cur)caret();
+    const c=s[i],unary=c==="−"&&(i===0||/[(+−×÷]/.test(s[i-1]));
+    add(OPS.includes(c)&&!unary?" "+c+" ":c,i);i++;}
+  if(cur>=s.length)caret();}
+function caretFromPoint(x,y){
+  let best=expr.length,bd=Infinity;
+  $("expr").querySelectorAll("[data-i]").forEach(el=>{const r=el.getBoundingClientRect(),i=+el.dataset.i,
+    dy=y<r.top?r.top-y:y>r.bottom?y-r.bottom:0;
+    [[r.left,i],[r.right,i+1]].forEach(([bx,bi])=>{const d=Math.abs(x-bx)+dy*4;if(d<bd){bd=d;best=bi;}});});
+  return best;}
 function fit(el,max){el.style.fontSize=max+"px";let s=max;
   while(el.scrollWidth>el.clientWidth&&s>20){s-=2;el.style.fontSize=s+"px";}}
 function render(){
@@ -173,9 +195,8 @@ function render(){
   $("result").textContent=expr===""?"0":(v===null?$("result").dataset.last||"0":fmtNum(v));
   if(v!==null)$("result").dataset.last=fmtNum(v);
   if(expr==="")$("result").dataset.last="0";
-  $("expr").innerHTML="";
-  $("expr").append(document.createTextNode(fmtExpr(expr)));
-  const c=document.createElement("span");c.className="caret";$("expr").append(c);
+  cur=Math.max(0,Math.min(cur,expr.length));
+  renderExpr();
   fit($("result"),52);
   const h=$("history");h.hidden=!showHist;h.innerHTML="";
   if(!history.length){const e=document.createElement("p");e.className="empty";e.textContent="CEを押すと計算が履歴に残ります";h.append(e);}
@@ -183,12 +204,20 @@ function render(){
     b.innerHTML='<span class="e"></span><span class="row"><span class="tm"></span><span class="r"></span></span>';
     b.querySelector(".e").textContent=fmtExpr(it.e);b.querySelector(".r").textContent="= "+it.r;
     b.querySelector(".tm").textContent=it.t?stamp(it.t):"";
-    b.addEventListener("click",()=>{expr=it.e;redo=[];render();toast("式を呼び出しました")});h.append(b);});
+    b.addEventListener("click",()=>{expr=it.e;cur=expr.length;redo=[];render();toast("式を呼び出しました")});h.append(b);});
   h.scrollTop=h.scrollHeight;}
 
 /* ---------- input ---------- */
 function lastNumber(){const m=expr.match(/[0-9.]+$/);return m?m[0]:"";}
+/* カーソルより前（expr）だけを編集し、後ろ（tail）はそのまま後ろにつなぐ */
 function press(k){
+  if(k==="CE"){commit();return;}
+  const tail=expr.slice(cur);expr=expr.slice(0,cur);
+  press1(k,tail);
+  cur=expr.length;expr+=tail;
+  if(k==="Del")return render();
+  done();}
+function press1(k,tail){
   const last=expr.slice(-1);
   if(/^\d+$/.test(k)){
     const n=lastNumber();
@@ -197,12 +226,12 @@ function press(k){
     if(k==="00"&&(lastNumber()===""))k="0";
     if(lastNumber().replace(".","").length>=15)return;
     expr+=k;}
-  else if(k==="."){const n=lastNumber();if(n.includes("."))return;
+  else if(k==="."){const n=lastNumber();if(n.includes(".")||/^[0-9]*\./.test(tail))return;
     if(last===")"||last==="%")expr+="×";
     expr+=n===""?"0.":".";}
   else if(OPS.includes(k)){
-    if(expr===""){if(k==="−")expr="−";else{const prev=history[history.length-1];if(prev&&prev.v!=null){expr=String(prev.v).replace("-","−")+k}}return done();}
-    if(last==="("){if(k==="−")expr+="−";return done();}
+    if(expr===""){if(k==="−")expr="−";else if(!tail){const prev=history[history.length-1];if(prev&&prev.v!=null){expr=String(prev.v).replace("-","−")+k}}return;}
+    if(last==="("){if(k==="−")expr+="−";return;}
     if(OPS.includes(last))expr=expr.slice(0,-1)+(expr.length===1&&k!=="−"?"":k);
     else expr+=k;}
   else if(k==="%"){if(/[0-9)]/.test(last))expr+="%";}
@@ -210,32 +239,38 @@ function press(k){
     const open=(expr.match(/\(/g)||[]).length-(expr.match(/\)/g)||[]).length;
     if(open>0&&/[0-9)%]/.test(last))expr+=")";
     else{if(/[0-9)%]/.test(last))expr+="×";expr+="(";}}
-  else if(k==="Del"){if(expr){redo.push(expr.slice(-1));expr=expr.slice(0,-1);} return render();}
-  else if(k==="CE"){commit();return;}
-  done();}
+  else if(k==="Del"){if(expr){redo.push(expr.slice(-1));expr=expr.slice(0,-1);}}}
 function done(){redo=[];render();}
+function moveCaret(n){cur=Math.max(0,Math.min(expr.length,n));render();}
 function commit(){
   const v=liveValue(expr);
   if(expr&&v!==null&&v!=="err"&&/[+−×÷%]/.test(expr.replace(/^−/,""))){
     history.push({e:expr.replace(/[+−×÷(]+$/,""),r:fmtNum(v),v:Number(v.toPrecision(14)),t:Date.now()});
     prune();}
-  expr="";redo=[];render();}
+  expr="";cur=0;redo=[];render();}
 $("keys").addEventListener("click",e=>{const b=e.target.closest(".k");if(b)press(b.dataset.k);});
 
 /* keyboard */
 const keymap={"*":"×","/":"÷","-":"−","+":"+","Backspace":"Del","Escape":"CE","Enter":"CE","%":"%",".":".","(":"()",")":"()"};
-document.addEventListener("keydown",e=>{let k=/^\d$/.test(e.key)?e.key:keymap[e.key];if(!k)return;e.preventDefault();press(k);});
+document.addEventListener("keydown",e=>{
+  const mv={ArrowLeft:cur-1,ArrowRight:cur+1,Home:0,End:expr.length}[e.key];if(mv!=null){e.preventDefault();return moveCaret(mv);}
+  let k=/^\d$/.test(e.key)?e.key:keymap[e.key];if(!k)return;e.preventDefault();press(k);});
 
 /* ---------- gestures on the display ---------- */
-let sx=0,sy=0,st=0,onResult=false,startedOnHistory=false;
+let sx=0,sy=0,st=0,onResult=false,startedOnHistory=false,onExpr=false;
 const disp=$("display");
 disp.addEventListener("pointerdown",e=>{sx=e.clientX;sy=e.clientY;st=Date.now();onResult=e.target===$("result");
-  startedOnHistory=!!e.target.closest(".history");});
+  startedOnHistory=!!e.target.closest(".history");
+  /* 式をタップ／なぞるとカーソルが動く（指を離した位置に入力される） */
+  onExpr=!!e.target.closest("#expr");
+  if(onExpr){disp.setPointerCapture(e.pointerId);moveCaret(caretFromPoint(e.clientX,e.clientY));}});
+disp.addEventListener("pointermove",e=>{if(onExpr&&e.buttons)moveCaret(caretFromPoint(e.clientX,e.clientY));});
 disp.addEventListener("pointerup",e=>{
+  if(onExpr){onExpr=false;return;}
   const dx=e.clientX-sx,dy=e.clientY-sy,dt=Date.now()-st;
   if(Math.abs(dx)>40&&Math.abs(dx)>Math.abs(dy)*1.3){
-    if(dx<0){if(expr){redo.push(expr.slice(-1));expr=expr.slice(0,-1);render();}}
-    else if(redo.length){expr+=redo.pop();render();}
+    if(dx<0){if(cur>0){redo.push(expr[cur-1]);expr=expr.slice(0,cur-1)+expr.slice(cur);cur--;render();}}
+    else if(redo.length){expr=expr.slice(0,cur)+redo.pop()+expr.slice(cur);cur++;render();}
     return;}
   if(onResult&&dt>500&&Math.abs(dx)<10&&Math.abs(dy)<10){
     const txt=$("result").textContent.replace(/,/g,"");
@@ -259,6 +294,7 @@ grip.addEventListener("pointerup",e=>{
   if(!moved){const now=Date.now();if(now-lastTap<350){setKh(KDEF,true);toast("キーの大きさを元に戻しました");}lastTap=now;}
   store.set("swcalc.kh",kh);});
 grip.addEventListener("pointercancel",()=>{gy=null;grip.classList.remove("drag");});
+if(store.get("swcalc.gripTip",false)&&!store.get("swcalc.caretTip",false)){setTimeout(()=>toast("式をタップすると、その位置から直せます"),600);store.set("swcalc.caretTip",true);}
 if(!store.get("swcalc.gripTip",false)){setTimeout(()=>toast("キー上のバーを下にドラッグすると履歴が広がります"),600);store.set("swcalc.gripTip",true);}
 render();
 })();

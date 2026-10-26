@@ -1,4 +1,4 @@
-const CACHE="swcalc-v3";
+const CACHE="swcalc-v4";
 const FILES=["./","index.html","manifest.webmanifest","icon-192.png","icon-512.png","icon-maskable.png"];
 // 新しい版は最新ファイルを取り直して保存
 self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES.map(f=>new Request(f,{cache:"reload"})))));self.skipWaiting();});
